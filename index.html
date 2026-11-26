@@ -7739,7 +7739,6 @@ async function handleExcelImport(event) {
     alert("Errore durante l'esportazione Excel: " + err.message);
   }
 }
-
 // 2. HTML EXPORT FUNCTION (Backup locale standalone)
 function exportUpdatedHTML() {
   let fullDoc = document.documentElement.outerHTML;
@@ -7760,6 +7759,174 @@ function exportUpdatedHTML() {
   URL.revokeObjectURL(url);
 
   showToast("Backup HTML locale scaricato con successo!");
+}
+// 2. HTML EXPORT FUNCTION (Backup locale standalone)
+function exportUpdatedHTML() {
+  let fullDoc = document.documentElement.outerHTML;
+  const exportData = cellarData.map(({__runtimeKey, ...wine}) => wine);
+  const jsonString = JSON.stringify(exportData, null, 2);
+  const regex = /const legacyCellarData = \[([\s\S]*?)\];/;
+  fullDoc = fullDoc.replace(regex, `const legacyCellarData = ${jsonString};`);
+
+  const blob = new Blob(["<!DOCTYPE html>\n<html lang=\"it\">" + fullDoc.slice(fullDoc.indexOf('<head>'))], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const timestamp = new Date().toISOString().slice(0,10);
+  a.href = url;
+  a.download = `Cantina_Vini_Backup_${timestamp}.html`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  showToast("Backup HTML locale scaricato con successo!");
+}
+
+// =========================================================
+// IMPORTAZIONE MASSIVA DA FILE EXCEL (.XLSX) SU SUPABASE
+// =========================================================
+async function handleExcelImport(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  try {
+    showToast('Lettura del file Excel in corso...');
+    const arrayBuffer = await file.arrayBuffer();
+    const wb = XLSX.read(arrayBuffer, { type: 'array' });
+
+    const firstSheetName = wb.SheetNames[0];
+    const rowsSheet1 = XLSX.utils.sheet_to_json(wb.Sheets[firstSheetName], { defval: '' });
+
+    if (!rowsSheet1.length) {
+      alert('Il file Excel selezionato è vuoto.');
+      event.target.value = '';
+      return;
+    }
+
+    const ratingsById = {};
+    const votazioniSheetName = wb.SheetNames.find(n => n.toLowerCase().includes('votazion')) || wb.SheetNames[1];
+    if (votazioniSheetName) {
+      const rowsSheet2 = XLSX.utils.sheet_to_json(wb.Sheets[votazioniSheetName], { defval: '' });
+      rowsSheet2.forEach(r => {
+        const rid = String(r['ID'] || r['id'] || '').trim();
+        const premio = String(r['Premio (Critico)'] || r['Premio'] || r['premio'] || '').trim();
+        const punteggio = String(r['Punteggio'] || r['punteggio'] || '').trim();
+        if (rid && (premio || punteggio)) {
+          if (!ratingsById[rid]) ratingsById[rid] = [];
+          ratingsById[rid].push({ premio, punteggio });
+        }
+      });
+    }
+
+    let maxNum = 0;
+    cellarData.forEach(w => {
+      const match = String(w.id || '').match(/^[A-Za-z]+(\d+)/);
+      if (match) {
+        const n = parseInt(match[1], 10);
+        if (n > maxNum) maxNum = n;
+      }
+    });
+
+    const getCol = (row, keys) => {
+      for (const k of keys) {
+        if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== '') {
+          return row[k];
+        }
+      }
+      return '';
+    };
+
+    const recordsToUpsert = [];
+    rowsSheet1.forEach(row => {
+      const nome = String(getCol(row, ['Nome del vino', 'Nome', 'nome'])).trim();
+      if (!nome) return;
+
+      let id = String(getCol(row, ['ID', 'id'])).trim();
+      if (!id) {
+        maxNum += 1;
+        id = 'A' + maxNum;
+      }
+
+      let gradRaw = getCol(row, ['Gradazione', 'gradazione']);
+      let gradazione = '';
+      if (typeof gradRaw === 'number') {
+        gradazione = gradRaw < 1 ? `${(gradRaw * 100).toFixed(1)}%` : `${gradRaw}%`;
+      } else {
+        gradazione = String(gradRaw).trim();
+      }
+
+      const annataRaw = getCol(row, ['Annata', 'annata']);
+      const annata = annataRaw !== '' && !isNaN(Number(annataRaw)) ? Number(annataRaw) : null;
+
+      const prezzoRaw = getCol(row, ['Prezzo', 'prezzo']);
+      const prezzo = prezzoRaw !== '' && !isNaN(Number(prezzoRaw)) ? Number(prezzoRaw) : 0;
+
+      const qtaRaw = getCol(row, ['Quantità', 'Quantita', 'quantita', 'Q.tà']);
+      const quantita = qtaRaw !== '' && !isNaN(Number(qtaRaw)) ? parseInt(qtaRaw, 10) : 1;
+
+      const qtaBevRaw = getCol(row, ['Quantità Bevuta', 'qta_bevuta']);
+      const qta_bevuta = qtaBevRaw !== '' && !isNaN(Number(qtaBevRaw)) ? parseInt(qtaBevRaw, 10) : 0;
+
+      const votoRaw = getCol(row, ['Votazione (scala 20)', 'voto20', 'Voto']);
+      const voto20 = votoRaw !== '' && !isNaN(Number(votoRaw)) ? Number(votoRaw) : null;
+
+      recordsToUpsert.push({
+        id,
+        nome,
+        denominazione: String(getCol(row, ['Denominazione', 'denominazione'])).trim(),
+        tipologia: String(getCol(row, ['Tipologia', 'tipologia']) || 'Rosso').trim(),
+        annata,
+        formato: String(getCol(row, ['Formato', 'formato']) || 'Standard (0.75L)').trim(),
+        certificazione: String(getCol(row, ['Certificazione', 'certificazione'])).trim(),
+        gradazione,
+        produttore: String(getCol(row, ['Produttore', 'produttore'])).trim(),
+        regione: String(getCol(row, ['Regione', 'regione'])).trim(),
+        vitigni: String(getCol(row, ['Vitigni', 'vitigni'])).trim(),
+        premi: String(getCol(row, ['Premi', 'premi'])).trim(),
+        prezzo,
+        consumo: String(getCol(row, ['Consumo Ideale', 'Consumo', 'consumo'])).trim(),
+        posizione: String(getCol(row, ['Posizione', 'posizione'])).trim(),
+        quantita,
+        degustazione: String(getCol(row, ['Note di degustazione', 'degustazione'])).trim(),
+        bevuto: String(getCol(row, ['Bevuto', 'bevuto'])).trim(),
+        qta_bevuta,
+        note_bevuta: String(getCol(row, ['Note bevuta', 'note_bevuta'])).trim(),
+        note: String(getCol(row, ['Note', 'note'])).trim(),
+        voto20,
+        votazioni: ratingsById[id] || [],
+        updated_at: new Date().toISOString()
+      });
+    });
+
+    if (!recordsToUpsert.length) {
+      alert('Nessun vino valido trovato. Verifica che esista la colonna "Nome del vino" o "Nome".');
+      event.target.value = '';
+      return;
+    }
+
+    const ok = confirm(`Trovate ${recordsToUpsert.length} etichette nel file Excel.\nVuoi caricarle su Supabase? (Gli ID già esistenti verranno aggiornati, i nuovi verranno aggiunti)`);
+    if (!ok) {
+      event.target.value = '';
+      return;
+    }
+
+    const { error } = await sbClient
+      .from('vini')
+      .upsert(recordsToUpsert, { onConflict: 'id' });
+
+    if (error) {
+      alert('Errore durante il caricamento su Supabase: ' + error.message);
+    } else {
+      await loadCellarFromCloud();
+      closeDrawer();
+      showToast(`Importate ${recordsToUpsert.length} etichette da Excel sul cloud ✓`);
+    }
+  } catch (err) {
+    console.error('Errore importazione Excel:', err);
+    alert('Errore lettura file Excel: ' + err.message);
+  } finally {
+    event.target.value = '';
+  }
 }
 </script>
 </body></html>
