@@ -6320,9 +6320,13 @@ tr:hover {
         <textarea id="formNote" rows="2" placeholder="Note aggiuntive..."></textarea>
       </div>
 
-      <!-- Action Buttons -->
+     <!-- Action Buttons -->
       <div class="form-actions">
-        <!-- Sezione Importazione Massiva da Excel -->
+        <button class="btn-primary" onclick="saveWineRecord()">💾 Salva Vino in Cantina</button>
+        <button class="btn-secondary" onclick="resetWineForm()">Pulisci Form</button>
+      </div>
+
+      <!-- Sezione Importazione Massiva da Excel -->
       <div class="export-card" style="margin-top: 1.5rem;">
         <h4>📥 Importa Vini da Excel (.xlsx)</h4>
         <p>Carica un file Excel con le colonne standard della cantina (ed eventuale secondo foglio <b>Votazioni</b>). Gli ID mancanti vengono generati in automatico.</p>
@@ -6332,9 +6336,6 @@ tr:hover {
             📂 Seleziona File Excel e Carica su Cloud
           </button>
         </div>
-      </div>
-        <button class="btn-primary" onclick="saveWineRecord()">💾 Salva Vino in Cantina</button>
-        <button class="btn-secondary" onclick="resetWineForm()">Pulisci Form</button>
       </div>
     </div>
   </div>
